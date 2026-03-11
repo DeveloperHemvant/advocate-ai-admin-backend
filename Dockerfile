@@ -17,5 +17,5 @@ ENV NODE_ENV=production
 ENV PORT=4100
 
 # Run migrations for legal_ai schema, then start server
-CMD ["sh", "-c", "npx prisma migrate deploy && node src/server.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && npx prisma db seed && node src/server.js"]
 
