@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function seedAdminUser() {
+  const now = new Date();
   const email = process.env.ADMIN_EMAIL || 'admin@legalai.com';
   const password = process.env.ADMIN_PASSWORD || 'admin123';
   const hashed = await bcrypt.hash(password, 10);
@@ -15,6 +16,8 @@ async function seedAdminUser() {
       email,
       password: hashed,
       role: 'admin',
+      createdAt: now,
+      updatedAt: now,
     },
   });
   console.log('Seed: admin user created (or already exists)');
@@ -35,6 +38,8 @@ async function seedAdminUser() {
         email: u.email,
         password: hashed,
         role: u.role,
+        createdAt: now,
+        updatedAt: now,
       },
     });
   }
@@ -46,6 +51,7 @@ function makeSamples(count) {
 }
 
 async function seedCoreTables() {
+  const now = new Date();
   // 10 sample laws
   const laws = makeSamples(10).map((i) => ({
     lawType: i % 2 === 0 ? 'IPC' : 'CrPC',
@@ -56,6 +62,8 @@ async function seedCoreTables() {
     bailable: i % 2 === 0 ? 'Bailable' : 'Non-bailable',
     cognizable: i % 2 === 0 ? 'Cognizable' : 'Non-cognizable',
     courtType: 'Sessions Court',
+    createdAt: now,
+    updatedAt: now,
   }));
   for (const law of laws) {
     // eslint-disable-next-line no-await-in-loop
@@ -76,7 +84,12 @@ async function seedCoreTables() {
   const createdJudgments = [];
   for (const j of judgments) {
     // eslint-disable-next-line no-await-in-loop
-    const created = await prisma.judgment.create({ data: j });
+    const created = await prisma.judgment.create({
+      data: {
+        ...j,
+        createdAt: now,
+      },
+    });
     createdJudgments.push(created);
   }
   console.log(`Seed: created ${createdJudgments.length} Judgment records`);
@@ -89,6 +102,8 @@ async function seedCoreTables() {
     draftText: `Full sample draft text for bail application ${i}. Contains headings, body, and prayer.`,
     courtType: 'Sessions Court',
     state: 'Sample State',
+    createdAt: now,
+    updatedAt: now,
   }));
   const createdDrafts = [];
   for (const d of drafts) {
@@ -105,7 +120,13 @@ async function seedCoreTables() {
   }));
   for (const t of templates) {
     // eslint-disable-next-line no-await-in-loop
-    await prisma.legalTemplate.create({ data: t });
+    await prisma.legalTemplate.create({
+      data: {
+        ...t,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
   }
   console.log(`Seed: created ${templates.length} LegalTemplate records`);
 
@@ -114,6 +135,7 @@ async function seedCoreTables() {
     question: `What is anticipatory bail in sample scenario ${i}?`,
     answer: 'Anticipatory bail is pre-arrest bail granted under Section 438 CrPC in appropriate cases.',
     source: 'Sample drafting guide',
+    createdAt: now,
   }));
   for (const q of questions) {
     // eslint-disable-next-line no-await-in-loop
@@ -126,6 +148,7 @@ async function seedCoreTables() {
     contentType: 'legal_draft',
     contentId: createdDrafts[i - 1]?.id || `draft_${i}`,
     vector: JSON.stringify({ placeholder: true, index: i }),
+    createdAt: now,
   }));
   for (const e of embeddings) {
     // eslint-disable-next-line no-await-in-loop
