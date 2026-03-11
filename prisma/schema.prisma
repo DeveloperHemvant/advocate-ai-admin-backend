@@ -1,0 +1,386 @@
+// Legal AI Admin – own database only (do not share with app API or AI agent).
+// Set LEGAL_AI_ADMIN_DATABASE_URL in env to use a dedicated DB; else DATABASE_URL.
+// Use ?schema=legal_ai in the URL.
+// Run: npx prisma generate && npx prisma migrate dev
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["legal_ai"]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("admin")
+  createdAt DateTime @map("created_at")
+  updatedAt DateTime @map("updated_at")
+
+  @@schema("legal_ai")
+  @@map("users")
+}
+
+model Law {
+  id            String   @id @default(cuid())
+  lawType       String   @map("law_type")
+  sectionNumber String   @map("section_number")
+  title         String?
+  description   String?  @db.Text
+  punishment    String?  @db.Text
+  bailable      String?
+  cognizable    String?
+  courtType     String?  @map("court_type")
+  createdAt     DateTime @map("created_at")
+  updatedAt     DateTime @map("updated_at")
+
+  @@schema("legal_ai")
+  @@map("laws")
+}
+
+model Judgment {
+  id        String   @id @default(cuid())
+  courtName String   @map("court_name")
+  caseTitle String   @map("case_title")
+  year      Int?
+  judgeName String?  @map("judge_name")
+  summary   String?  @db.Text
+  fullText  String?  @map("full_text") @db.Text
+  citation  String?
+  createdAt DateTime @map("created_at")
+
+  @@schema("legal_ai")
+  @@map("judgments")
+}
+
+model LegalDraft {
+  id           String   @id @default(cuid())
+  documentType String   @map("document_type")
+  title        String?
+  facts        String?  @db.Text
+  draftText    String   @map("draft_text") @db.Text
+  courtType    String?  @map("court_type")
+  state        String?
+  createdAt    DateTime @map("created_at")
+  updatedAt    DateTime @map("updated_at")
+
+  @@schema("legal_ai")
+  @@map("legal_drafts")
+}
+
+model LegalTemplate {
+  id           String   @id @default(cuid())
+  documentType String   @map("document_type")
+  templateText String   @map("template_text") @db.Text
+  createdAt    DateTime @map("created_at")
+  updatedAt    DateTime @map("updated_at")
+
+  @@schema("legal_ai")
+  @@map("legal_templates")
+}
+
+model LegalQuestion {
+  id        String   @id @default(cuid())
+  question  String   @db.Text
+  answer    String   @db.Text
+  source    String?
+  createdAt DateTime @map("created_at")
+
+  @@schema("legal_ai")
+  @@map("legal_questions")
+}
+
+// RAG embeddings: vector = legacy JSON text; pgvector column added via migration (embedding vector(768))
+model Embedding {
+  id          String   @id @default(cuid())
+  contentType String   @map("content_type")
+  contentId   String   @map("content_id")
+  vector      String   @db.Text
+  createdAt   DateTime @map("created_at")
+
+  @@unique([contentType, contentId])
+  @@schema("legal_ai")
+  @@map("embeddings")
+}
+
+enum TrainingRunType {
+  RAG_EVAL
+  FINETUNE
+
+  @@schema("legal_ai")
+}
+
+enum TrainingRunStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+
+  @@schema("legal_ai")
+}
+
+enum ReviewStatus {
+  UNREVIEWED
+  APPROVED
+  REJECTED
+
+  @@schema("legal_ai")
+}
+
+model DatasetVersion {
+  id        String            @id @default(cuid())
+  name      String
+  notes     String?           @db.Text
+  examples  TrainingExample[]
+  runs      TrainingRun[]
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  @@schema("legal_ai")
+  @@map("dataset_versions")
+}
+
+model TrainingExample {
+  id               String         @id @default(cuid())
+  datasetVersionId String         @map("dataset_version_id")
+
+  documentType String @map("document_type")
+  courtType    String? @map("court_type")
+  state        String?
+  facts        String? @db.Text
+  inputJson    Json?   @map("input_json")
+
+  expectedDraftText String @map("expected_draft_text") @db.Text
+
+  tags       String[]
+  difficulty String?
+  source     String?
+
+  datasetVersion DatasetVersion @relation(fields: [datasetVersionId], references: [id], onDelete: Cascade)
+  results        EvaluationResult[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([datasetVersionId])
+  @@schema("legal_ai")
+  @@map("training_examples")
+}
+
+model TrainingRun {
+  id               String            @id @default(cuid())
+  type             TrainingRunType
+  status           TrainingRunStatus @default(DRAFT)
+  datasetVersionId String            @map("dataset_version_id")
+
+  baseModel      String? @map("base_model")
+  embeddingModel String? @map("embedding_model")
+  paramsJson     Json?   @map("params_json")
+  logsText       String? @map("logs_text") @db.Text
+
+  startedAt DateTime? @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+
+  datasetVersion DatasetVersion @relation(fields: [datasetVersionId], references: [id], onDelete: Restrict)
+  results        EvaluationResult[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([datasetVersionId])
+  @@schema("legal_ai")
+  @@map("training_runs")
+}
+
+model EvaluationResult {
+  id                String      @id @default(cuid())
+  trainingRunId     String      @map("training_run_id")
+  trainingExampleId String      @map("training_example_id")
+
+  generatedText String @map("generated_text") @db.Text
+
+  scoreOverall    Float  @map("score_overall")
+  scoreFormat     Float? @map("score_format")
+  scoreCoverage   Float? @map("score_coverage")
+  scoreSimilarity Float? @map("score_similarity")
+
+  // Advanced evaluation metrics for Harvey-level scoring
+  legalAccuracy     Float? @map("legal_accuracy")
+  citationAccuracy  Float? @map("citation_accuracy")
+  argumentQuality   Float? @map("argument_quality")
+  structureQuality  Float? @map("structure_quality")
+  languageQuality   Float? @map("language_quality")
+  judgeFeedbackJson Json?  @map("judge_feedback_json")
+
+  failureReason String? @map("failure_reason")
+  reviewStatus  ReviewStatus @default(UNREVIEWED) @map("review_status")
+  reviewNotes   String? @map("review_notes") @db.Text
+
+  retrievedContextIds String[] @map("retrieved_context_ids")
+
+  trainingRun     TrainingRun     @relation(fields: [trainingRunId], references: [id], onDelete: Cascade)
+  trainingExample TrainingExample @relation(fields: [trainingExampleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([trainingRunId])
+  @@index([trainingExampleId])
+  @@schema("legal_ai")
+  @@map("evaluation_results")
+}
+
+/// Reasoning records following an IRAC-like structure for a case type.
+model LegalReasoning {
+  id        String   @id @default(cuid())
+  caseType  String   @map("case_type")
+  issue     String   @db.Text
+  rule      String   @db.Text
+  application String @db.Text
+  conclusion String  @db.Text
+  citations String?  @db.Text
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@schema("legal_ai")
+  @@map("legal_reasoning")
+}
+
+/// Top-level legal documents (judgments, statutes, articles) used for RAG and citations.
+model LegalDocument {
+  id           String   @id @default(cuid())
+  title        String
+  court        String?
+  year         Int?
+  jurisdiction String?
+  documentType String   @map("document_type")
+  text         String   @db.Text
+  // Document-level embedding in shared public.vector type
+  // Mapped via SQL migration; Prisma sees it as unsupported (no @db for Unsupported)
+  embedding  Unsupported("public.vector")?
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  chunks           LegalChunk[]
+  citations        LegalCitation[]
+  judgmentAnalyses JudgmentAnalysis[]
+
+  @@schema("legal_ai")
+  @@map("legal_documents")
+}
+
+/// Individual citations extracted from legal documents.
+model LegalCitation {
+  id              String        @id @default(cuid())
+  documentId      String        @map("document_id")
+  citationText    String        @map("citation_text") @db.Text
+  sectionReference String?      @map("section_reference")
+  metadata        Json?
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  document LegalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@schema("legal_ai")
+  @@map("legal_citations")
+}
+
+/// Reusable legal arguments (grounds, counter-arguments, supporting cases).
+model LegalArgument {
+  id               String   @id @default(cuid())
+  caseType         String   @map("case_type")
+  argumentTitle    String   @map("argument_title")
+  argumentPoints   Json     @map("argument_points")
+  supportingCases  Json?    @map("supporting_cases")
+  counterArguments Json?    @map("counter_arguments")
+  metadata         Json?
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@schema("legal_ai")
+  @@map("legal_arguments")
+}
+
+/// Chunked text for RAG over legal knowledge.
+model LegalChunk {
+  id         String   @id @default(cuid())
+  documentId String   @map("document_id")
+  chunkText  String   @map("chunk_text") @db.Text
+  // Chunk-level embedding using pgvector; mapped as Unsupported (no @db for Unsupported)
+  embedding  Unsupported("public.vector")?
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  document LegalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@schema("legal_ai")
+  @@map("legal_chunks")
+}
+
+/// Structured analysis of judgments for quick understanding and training data.
+model JudgmentAnalysis {
+  id             String         @id @default(cuid())
+  documentId     String         @map("document_id")
+  factsSummary   String         @map("facts_summary") @db.Text
+  legalIssues    String         @map("legal_issues") @db.Text
+  courtReasoning String         @map("court_reasoning") @db.Text
+  finalDecision  String         @map("final_decision") @db.Text
+  keyCitations   String?        @map("key_citations") @db.Text
+  metadata       Json?
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  document LegalDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@schema("legal_ai")
+  @@map("judgment_analysis")
+}
+
+/// Nodes in the legal knowledge graph (cases, statutes, principles, arguments).
+model LegalEntity {
+  id         String   @id @default(cuid())
+  entityType String   @map("entity_type")
+  name       String
+  externalId String?  @map("external_id")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  outgoingRelationships LegalRelationship[] @relation("fromEntity")
+  incomingRelationships LegalRelationship[] @relation("toEntity")
+
+  @@schema("legal_ai")
+  @@map("legal_entities")
+}
+
+/// Edges in the legal knowledge graph.
+model LegalRelationship {
+  id           String      @id @default(cuid())
+  fromEntityId String      @map("from_entity_id")
+  toEntityId   String      @map("to_entity_id")
+  relationType String      @map("relation_type")
+  metadata     Json?
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  fromEntity LegalEntity @relation("fromEntity", fields: [fromEntityId], references: [id], onDelete: Cascade)
+  toEntity   LegalEntity @relation("toEntity", fields: [toEntityId], references: [id], onDelete: Cascade)
+
+  @@index([fromEntityId])
+  @@index([toEntityId])
+  @@schema("legal_ai")
+  @@map("legal_relationships")
+}
